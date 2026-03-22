@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Панель администратора</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; min-height: 100vh; }
+.header { background: #1F3864; padding: 16px 32px; display: flex; align-items: center; gap: 16px; }
+.header h1 { color: #fff; font-size: 18px; font-weight: 700; }
+.header a { color: rgba(255,255,255,0.7); font-size: 13px; text-decoration: none; }
+.header a:hover { color: #fff; }
+.container { max-width: 900px; margin: 32px auto; padding: 0 20px; }
+.card { background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 1px 6px rgba(0,0,0,0.06); }
+.card h2 { font-size: 16px; color: #1F3864; font-weight: 700; margin-bottom: 20px; }
+.add-user { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 24px; }
+.add-user input { flex: 1; min-width: 180px; padding: 9px 12px; border: 1.5px solid #d1d5db; border-radius: 8px; font-size: 14px; outline: none; }
+.add-user input:focus { border-color: #2E75B6; }
+label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #374151; cursor: pointer; padding: 9px 0; white-space: nowrap; }
+.btn { padding: 9px 18px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.btn-primary { background: #1F3864; color: #fff; }
+.btn-primary:hover { background: #2E75B6; }
+.btn-danger { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+.btn-danger:hover { background: #fee2e2; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 10px 12px; font-size: 12px; color: #6b7280; font-weight: 600; border-bottom: 2px solid #f3f4f6; text-transform: uppercase; letter-spacing: .4px; }
+td { padding: 12px 12px; font-size: 14px; border-bottom: 1px solid #f3f4f6; color: #111; }
+tr:last-child td { border-bottom: none; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.badge-admin { background: #ede9fe; color: #5b21b6; }
+.badge-user { background: #f3f4f6; color: #6b7280; }
+.msg-ok { background: #f0f9f4; color: #1B5E20; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+.msg-err { background: #fef2f2; color: #dc2626; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Панель администратора</h1>
+  <a href="/app.html">← Вернуться к агенту</a>
+</div>
+
+<div class="container">
+  <div class="card">
+    <h2>Добавить пользователя</h2>
+    <div class="msg-ok" id="addOk">Пользователь создан</div>
+    <div class="msg-err" id="addErr"></div>
+    <div class="add-user">
+      <input type="email" id="newEmail" placeholder="Email">
+      <input type="password" id="newPwd" placeholder="Пароль (мин. 6 символов)">
+      <label class="check"><input type="checkbox" id="newAdmin"> Администратор</label>
+      <button class="btn btn-primary" onclick="addUser()">Добавить</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Пользователи (<span id="userCount">0</span>)</h2>
+    <div class="msg-err" id="delErr"></div>
+    <table>
+      <thead>
+        <tr><th>Email</th><th>Роль</th><th>Дата регистрации</th><th></th></tr>
+      </thead>
+      <tbody id="usersTable"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://bqcvhudwjpcxrqseggbj.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_yBNVvh3r5pANHNASwP0acw__xVfHowl';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let currentUserId = null;
+
+(async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.location.href = '/'; return; }
+  currentUserId = session.user.id;
+
+  const { data: profile } = await sb.from('profiles').select('is_admin').eq('id', currentUserId).single();
+  if (!profile?.is_admin) { window.location.href = '/app.html'; return; }
+
+  loadUsers();
+})();
+
+async function apiCall(method, body, params) {
+  const { data: { session } } = await sb.auth.getSession();
+  let url = '/api/admin';
+  if (params) url += '?' + new URLSearchParams(params);
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  return r.json();
+}
+
+async function loadUsers() {
+  const data = await apiCall('GET', null, { action: 'users' });
+  const users = data.users || [];
+  document.getElementById('userCount').textContent = users.length;
+  const tbody = document.getElementById('usersTable');
+  tbody.innerHTML = '';
+  users.forEach(u => {
+    const tr = document.createElement('tr');
+    const isMe = u.id === currentUserId;
+    tr.innerHTML = `
+      <td>${esc(u.email || '—')}</td>
+      <td><span class="badge ${u.is_admin ? 'badge-admin' : 'badge-user'}">${u.is_admin ? 'Администратор' : 'Пользователь'}</span></td>
+      <td>${fmtDate(u.created_at)}</td>
+      <td>${isMe ? '<span style="color:#9ca3af;font-size:12px">это вы</span>' : `<button class="btn btn-danger btn-sm" onclick="deleteUser('${u.id}','${esc(u.email)}')">Удалить</button>`}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function addUser() {
+  const email = document.getElementById('newEmail').value.trim();
+  const password = document.getElementById('newPwd').value;
+  const isAdmin = document.getElementById('newAdmin').checked;
+  const ok = document.getElementById('addOk');
+  const err = document.getElementById('addErr');
+  ok.style.display = 'none';
+  err.style.display = 'none';
+
+  if (!email || !password) { showErr(err, 'Введите email и пароль'); return; }
+  if (password.length < 6) { showErr(err, 'Пароль должен быть не менее 6 символов'); return; }
+
+  const data = await apiCall('POST', { email, password, isAdmin });
+  if (data.error) { showErr(err, data.error); return; }
+
+  ok.style.display = 'block';
+  document.getElementById('newEmail').value = '';
+  document.getElementById('newPwd').value = '';
+  document.getElementById('newAdmin').checked = false;
+  loadUsers();
+}
+
+async function deleteUser(userId, email) {
+  if (!confirm(`Удалить пользователя ${email}?\nВсе его сметы также будут удалены.`)) return;
+  const err = document.getElementById('delErr');
+  err.style.display = 'none';
+  const data = await apiCall('DELETE', { userId });
+  if (data.error) { showErr(err, data.error); return; }
+  loadUsers();
+}
+
+function showErr(el, msg) { el.textContent = msg; el.style.display = 'block'; }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit', year:'2-digit' });
+}
+</script>
+</body>
+</html>
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Сметный агент</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; height: 100vh; display: flex; overflow: hidden; }
+
+/* Sidebar */
+.sidebar { width: 280px; min-width: 280px; background: #1F3864; display: flex; flex-direction: column; height: 100vh; }
+.sidebar-header { padding: 20px 16px 12px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.sidebar-header h2 { color: #fff; font-size: 16px; font-weight: 700; }
+.sidebar-header p { color: rgba(255,255,255,0.6); font-size: 12px; margin-top: 2px; }
+.new-btn { margin: 12px; padding: 10px; background: #2E75B6; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; width: calc(100% - 24px); transition: background .2s; }
+.new-btn:hover { background: #378ADD; }
+.estimates-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+.est-item { padding: 10px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; transition: background .15s; }
+.est-item:hover { background: rgba(255,255,255,0.1); }
+.est-item.active { background: rgba(255,255,255,0.15); }
+.est-item .est-title { color: #fff; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.est-item .est-date { color: rgba(255,255,255,0.5); font-size: 11px; margin-top: 2px; }
+.sidebar-footer { padding: 12px; border-top: 1px solid rgba(255,255,255,0.1); }
+.user-row { display: flex; align-items: center; justify-content: space-between; }
+.user-email { color: rgba(255,255,255,0.7); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.logout-btn { color: rgba(255,255,255,0.5); background: none; border: none; cursor: pointer; font-size: 12px; padding: 4px 6px; border-radius: 4px; }
+.logout-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
+.admin-link { display: block; color: rgba(255,255,255,0.5); font-size: 11px; text-align: center; margin-top: 8px; text-decoration: none; }
+.admin-link:hover { color: #fff; }
+
+/* Main */
+.main { flex: 1; display: flex; flex-direction: column; height: 100vh; min-width: 0; }
+.top-bar { background: #fff; padding: 14px 20px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px; }
+.top-bar h3 { font-size: 15px; color: #1F3864; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.download-btn { padding: 7px 14px; background: #f0f9f4; color: #1B5E20; border: 1px solid #c6e6d0; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 500; }
+.download-btn:hover { background: #d4f0de; }
+
+/* Chat */
+.chat-area { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; background: #f7f8fa; }
+.msg { max-width: 80%; }
+.msg.user { align-self: flex-end; }
+.msg.assistant { align-self: flex-start; }
+.msg-bubble { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.msg.user .msg-bubble { background: #1F3864; color: #fff; border-bottom-right-radius: 4px; }
+.msg.assistant .msg-bubble { background: #fff; color: #111; border-bottom-left-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+.msg-time { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+.msg.user .msg-time { text-align: right; }
+.typing { align-self: flex-start; }
+.typing .msg-bubble { color: #6b7280; font-style: italic; }
+.empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #9ca3af; text-align: center; gap: 8px; }
+.empty-state .icon { font-size: 48px; }
+.empty-state h3 { color: #4b5563; font-size: 18px; }
+.empty-state p { font-size: 14px; max-width: 360px; }
+
+/* Input area */
+.input-area { background: #fff; border-top: 1px solid #e5e7eb; padding: 16px 20px; }
+.vor-info { background: #f0f9f4; border: 1px solid #c6e6d0; border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; color: #1B5E20; display: none; align-items: center; justify-content: space-between; }
+.vor-info button { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 16px; }
+.input-row { display: flex; gap: 10px; align-items: flex-end; }
+.attach-btn { padding: 10px 12px; background: #f3f4f6; border: 1.5px solid #d1d5db; border-radius: 8px; cursor: pointer; font-size: 18px; flex-shrink: 0; transition: background .15s; }
+.attach-btn:hover { background: #e5e7eb; }
+textarea { flex: 1; padding: 10px 14px; border: 1.5px solid #d1d5db; border-radius: 8px; font-size: 14px; resize: none; outline: none; font-family: inherit; min-height: 44px; max-height: 200px; transition: border-color .2s; line-height: 1.5; }
+textarea:focus { border-color: #2E75B6; }
+.send-btn { padding: 10px 18px; background: #1F3864; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; flex-shrink: 0; transition: background .2s; }
+.send-btn:hover:not(:disabled) { background: #2E75B6; }
+.send-btn:disabled { background: #d1d5db; cursor: not-allowed; }
+#fileInput { display: none; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-header">
+    <h2>Сметный агент</h2>
+    <p id="userEmail">Загрузка...</p>
+  </div>
+  <button class="new-btn" onclick="newChat()">+ Новая смета</button>
+  <div class="estimates-list" id="estList"></div>
+  <div class="sidebar-footer">
+    <div class="user-row">
+      <span class="user-email" id="userEmailFooter"></span>
+      <button class="logout-btn" onclick="logout()">Выйти</button>
+    </div>
+    <a href="/admin.html" class="admin-link" id="adminLink" style="display:none">⚙ Панель администратора</a>
+  </div>
+</div>
+
+<div class="main">
+  <div class="top-bar">
+    <h3 id="chatTitle">Новая смета</h3>
+    <button class="download-btn" onclick="downloadChat()" id="downloadBtn" style="display:none">Скачать таблицу (Excel)</button>
+  </div>
+  <div class="chat-area" id="chatArea">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">📋</div>
+      <h3>Новая смета</h3>
+      <p>Нажмите 📎 чтобы загрузить файл ВОР, или напишите сообщение для начала работы</p>
+    </div>
+  </div>
+  <div class="input-area">
+    <div class="vor-info" id="vorInfo">
+      <span id="vorName">Файл не выбран</span>
+      <button onclick="clearVor()">✕</button>
+    </div>
+    <div class="input-row">
+      <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Загрузить ВОР (Excel)">📎</button>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" onchange="handleFile(event)">
+      <textarea id="msgInput" placeholder="Напишите сообщение..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()">Отправить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://bqcvhudwjpcxrqseggbj.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_yBNVvh3r5pANHNASwP0acw__xVfHowl';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let currentUser = null;
+let currentEstimateId = null;
+let messages = [];
+let pendingVorText = null;
+let isLoading = false;
+
+// Init
+(async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.location.href = '/'; return; }
+  currentUser = session.user;
+  document.getElementById('userEmail').textContent = currentUser.email;
+  document.getElementById('userEmailFooter').textContent = currentUser.email;
+
+  // Check admin
+  const { data: profile } = await sb.from('profiles').select('is_admin').eq('id', currentUser.id).single();
+  if (profile?.is_admin) document.getElementById('adminLink').style.display = 'block';
+
+  loadEstimates();
+})();
+
+async function loadEstimates() {
+  const { data } = await sb.from('estimates')
+    .select('id, title, updated_at')
+    .eq('user_id', currentUser.id)
+    .order('updated_at', { ascending: false });
+
+  const list = document.getElementById('estList');
+  list.innerHTML = '';
+  (data || []).forEach(est => {
+    const d = document.createElement('div');
+    d.className = 'est-item' + (est.id === currentEstimateId ? ' active' : '');
+    d.innerHTML = `<div class="est-title">${esc(est.title)}</div><div class="est-date">${fmtDate(est.updated_at)}</div>`;
+    d.onclick = () => loadEstimate(est.id);
+    list.appendChild(d);
+  });
+}
+
+async function loadEstimate(id) {
+  const { data } = await sb.from('estimates').select('*').eq('id', id).single();
+  if (!data) return;
+  currentEstimateId = id;
+  messages = data.messages || [];
+  document.getElementById('chatTitle').textContent = data.title;
+  document.getElementById('downloadBtn').style.display = 'block';
+  renderMessages();
+  loadEstimates();
+}
+
+function newChat() {
+  currentEstimateId = null;
+  messages = [];
+  pendingVorText = null;
+  document.getElementById('chatTitle').textContent = 'Новая смета';
+  document.getElementById('downloadBtn').style.display = 'none';
+  document.getElementById('vorInfo').style.display = 'none';
+  renderMessages();
+  loadEstimates();
+}
+
+function renderMessages() {
+  const area = document.getElementById('chatArea');
+  const empty = document.getElementById('emptyState');
+  area.innerHTML = '';
+
+  if (messages.length === 0) {
+    area.appendChild(empty);
+    return;
+  }
+
+  messages.forEach(m => {
+    const div = document.createElement('div');
+    div.className = 'msg ' + m.role;
+    div.innerHTML = `<div class="msg-bubble">${esc(m.content)}</div>`;
+    area.appendChild(div);
+  });
+  area.scrollTop = area.scrollHeight;
+}
+
+function handleFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const wb = XLSX.read(ev.target.result, { type: 'binary' });
+    let text = `=== ФАЙЛ ВОР: ${file.name} ===\n\n`;
+    wb.SheetNames.forEach(name => {
+      const ws = wb.Sheets[name];
+      const csv = XLSX.utils.sheet_to_csv(ws, { skipHidden: true });
+      if (csv.trim()) text += `--- Лист: ${name} ---\n${csv}\n\n`;
+    });
+    pendingVorText = text;
+    document.getElementById('vorName').textContent = file.name;
+    document.getElementById('vorInfo').style.display = 'flex';
+  };
+  reader.readAsBinaryString(file);
+  e.target.value = '';
+}
+
+function clearVor() {
+  pendingVorText = null;
+  document.getElementById('vorInfo').style.display = 'none';
+}
+
+async function sendMessage() {
+  if (isLoading) return;
+  const input = document.getElementById('msgInput');
+  let text = input.value.trim();
+
+  if (pendingVorText) {
+    text = pendingVorText + (text ? '\n\nКомментарий пользователя: ' + text : '');
+    clearVor();
+  }
+
+  if (!text) return;
+
+  input.value = '';
+  autoResize(input);
+  isLoading = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  messages.push({ role: 'user', content: text });
+  renderMessages();
+
+  // Show typing
+  const area = document.getElementById('chatArea');
+  const typing = document.createElement('div');
+  typing.className = 'msg assistant typing';
+  typing.innerHTML = '<div class="msg-bubble">Анализирую...</div>';
+  area.appendChild(typing);
+  area.scrollTop = area.scrollHeight;
+
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+      body: JSON.stringify({ messages, estimateId: currentEstimateId, title: messages[0]?.content?.slice(0, 60) })
+    });
+
+    const json = await resp.json();
+    if (json.error) throw new Error(json.error);
+
+    if (json.estimateId && !currentEstimateId) {
+      currentEstimateId = json.estimateId;
+      document.getElementById('downloadBtn').style.display = 'block';
+    }
+
+    messages.push({ role: 'assistant', content: json.message });
+    renderMessages();
+    loadEstimates();
+  } catch (err) {
+    messages.pop();
+    alert('Ошибка: ' + err.message);
+    renderMessages();
+  }
+
+  isLoading = false;
+  document.getElementById('sendBtn').disabled = false;
+}
+
+function downloadChat() {
+  const tableLines = [];
+  const header = ['№','Раздел','Шифр расценки','Наименование работ','Ед.изм','Объём','Стоим. ед. (баз.)','Всего (баз.)','Примечание'];
+  tableLines.push(header);
+
+  // Extract table from last assistant message
+  const lastAssist = [...messages].reverse().find(m => m.role === 'assistant');
+  if (!lastAssist) { alert('Нет данных для скачивания'); return; }
+
+  const lines = lastAssist.content.split('\n');
+  lines.forEach(line => {
+    const cells = line.split('|').map(c => c.trim()).filter(c => c);
+    if (cells.length >= 3) tableLines.push(cells);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(tableLines);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Смета');
+  XLSX.writeFile(wb, 'smeta_' + new Date().toISOString().slice(0,10) + '.xlsx');
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+async function logout() {
+  await sb.auth.signOut();
+  window.location.href = '/';
+}
+
+function esc(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+</script>
+</body>
+</html>
+
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Сметный агент — Вход</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .card { background: #fff; border-radius: 16px; padding: 48px 40px; width: 100%; max-width: 400px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); }
+  .logo { text-align: center; margin-bottom: 32px; }
+  .logo h1 { font-size: 22px; color: #1F3864; font-weight: 700; }
+  .logo p { color: #6b7280; font-size: 14px; margin-top: 6px; }
+  label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+  input { width: 100%; padding: 11px 14px; border: 1.5px solid #d1d5db; border-radius: 8px; font-size: 15px; outline: none; transition: border-color .2s; }
+  input:focus { border-color: #2E75B6; }
+  .field { margin-bottom: 20px; }
+  button { width: 100%; padding: 12px; background: #1F3864; color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background .2s; }
+  button:hover { background: #2E75B6; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  .error { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1>Сметный агент</h1>
+    <p>Введите данные для входа</p>
+  </div>
+  <div class="error" id="err"></div>
+  <div class="field">
+    <label>Email</label>
+    <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
+  </div>
+  <div class="field">
+    <label>Пароль</label>
+    <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
+  </div>
+  <button id="btn" onclick="login()">Войти</button>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://bqcvhudwjpcxrqseggbj.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_yBNVvh3r5pANHNASwP0acw__xVfHowl';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Auto-redirect if already logged in
+sb.auth.getSession().then(({ data: { session } }) => {
+  if (session) window.location.href = '/app.html';
+});
+
+async function login() {
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const btn = document.getElementById('btn');
+  const err = document.getElementById('err');
+
+  if (!email || !password) { showError('Введите email и пароль'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Вхожу...';
+  err.style.display = 'none';
+
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) {
+    showError('Неверный email или пароль');
+    btn.disabled = false;
+    btn.textContent = 'Войти';
+  } else {
+    window.location.href = '/app.html';
+  }
+}
+
+function showError(msg) {
+  const err = document.getElementById('err');
+  err.textContent = msg;
+  err.style.display = 'block';
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+</script>
+</body>
+</html>
+
+{
+  "name": "smeta-app",
+  "version": "1.0.0",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}
+
+{
+  "functions": {
+    "api/*.js": {
+      "maxDuration": 60
+    }
+  }
+}
+
+const Anthropic = require('@anthropic-ai/sdk');
+const { createClient } = require('@supabase/supabase-js');
+
+const SYSTEM_PROMPT = `Ты — опытный сметчик-аналитик с глубокими знаниями строительного ценообразования в России. Твоя задача — на основе предоставленной ведомости объёмов работ (ВОР) сформировать структурированную таблицу сметных позиций, готовую для импорта в ГРАНД-Смету (формат Excel).
+
+ТВОИ КОМПЕТЕНЦИИ:
+• Знаешь нормативные сборники ФЕР, ТЕР, ГЭСН всех актуальных редакций
+• Понимаешь методологию базисно-индексного и ресурсного методов расчёта
+• Умеешь читать ВОР и аналогичные сметы — извлекать параметры расчёта из готовых документов
+• При некачественных ВОР — останавливаешься и уточняешь, не додумываешь
+• Честно сообщаешь об ограничениях по индексам (данные до августа 2025)
+• При больших ВОР (150+ позиций) — обрабатываешь блоками по 40-50 позиций
+• В начале каждой сессии предлагаешь использовать параметры из предыдущего сеанса
+
+━━━ ШАГ 1: АНАЛИЗ ВОР И ВОПРОСЫ ━━━
+
+ДЕЙСТВИЕ 0 — первое что делаешь после получения ВОР:
+Спроси: «Есть ли у вас аналогичная смета по похожему объекту? Загрузите её — я автоматически извлеку параметры (метод расчёта, сборник, регион, коэффициенты) и задам вопросы только по недостающему.»
+Жди ответа. Если аналог загружен — извлеки параметры и покажи таблицу: параметр | извлечено | статус (✓ или ⚠).
+
+ДЕЙСТВИЕ 1 — проверка объёма:
+Если ВОР > 150 позиций — предупреди и перейди в блочный режим (40-50 позиций за раз, подтверждение после каждого блока).
+
+ДЕЙСТВИЕ 2 — проверка качества ВОР:
+Найди проблемы: нет единиц измерения, нулевые объёмы, размытые формулировки, дубли. Перечисли и спроси — продолжать или ждать уточнений.
+
+ДЕЙСТВИЕ 3 — резюме:
+«В ВОР обнаружено N позиций в M разделах: [перечень]. Проблемных: K.»
+
+ДЕЙСТВИЕ 4 — ПОЛНЫЙ список вопросов (все сразу, единым списком):
+
+БЛОК А — Метод и нормативная база:
+[1] Метод расчёта: базисно-индексный или ресурсный?
+→ Если базисно-индексный: ФЕР или ТЕР? Если ТЕР — регион?
+[2] Редакция сборника? (умолчание: ФЕР-2020)
+→ Для госзаказа: проверьте не установлена ли в ТЗ
+[3] Индексы перевода в текущие цены известны?
+→ Если да — квартал и значения (ОЗП, ЭМ, МАТ, НР, СП)
+→ ВАЖНО: мои данные до августа 2025. Более поздние кварталы — укажите вручную из приказов Минстроя
+
+БЛОК Б — Заказчик и документы:
+[4] Тип заказчика: госзаказ (44-ФЗ/223-ФЗ) или коммерческий?
+→ Госзаказ: нужна форма №4, ССР?
+[5] Нужна пояснительная записка?
+[6] Требования к форме Excel?
+
+БЛОК В — Финансы:
+[7] НДС: 20% или без?
+[8] НР и СП: по нормативам МДС или вручную (% от ФОТ)?
+[9] Лимитированные затраты: ВЗиС, зимнее удорожание, резерв?
+
+БЛОК Г — Условия:
+[10] Условия: обычные, стеснённые, вахта?
+[11] Зимний период — учитывать?
+[12] Высотность выше 2-го этажа?
+[13] Действующее предприятие?
+
+БЛОК Д — Структура:
+[14] Разбивка на разделы — по какому принципу?
+[15] Демонтажные работы? Куда материалы от разборки?
+[16] Позиции собственными силами — выделить?
+[17] Давальческие материалы заказчика?
+
+БЛОК Е — Материалы:
+[18] Марки материалов указаны или подбирать по нормативным заменам?
+[19] Импортные материалы без расценок?
+[20] Транспортные расходы — дополнительно или включены?
+
+После списка вопросов напиши: «Ответьте на вопросы, относящиеся к вашему проекту. Остальные пропустите или напишите "по умолчанию" — применю стандартные нормативные значения.»
+
+НЕ НАЧИНАЙ ФОРМИРОВАТЬ ТАБЛИЦУ до получения ответов хотя бы на вопросы 1, 4 и 7 (или их автозаполнения из аналога).
+
+━━━ ШАГ 2: ПОДБОР РАСЦЕНОК ━━━
+
+• Для каждой позиции ВОР подбери расценку из сборника указанной редакции
+• Несколько расценок на одну позицию — разбей на строки
+• Не найдено — пометь «[ТРЕБУЕТ УТОЧНЕНИЯ]» с пояснением
+• Итог: «Подобрано X из Y. Требует уточнения: Z»
+
+━━━ ШАГ 3: ТАБЛИЦА ━━━
+
+Столбцы (строго в порядке): № | Раздел | Шифр расценки | Наименование работ | Ед.изм | Объём | Стоимость ед. (баз.) | Всего (баз.) | Примечание
+
+ПРАВИЛА ЗАПОЛНЕНИЯ:
+• «Раздел» — группирующий заголовок, остальные столбцы строки-раздела пусты
+• Шифр — с редакцией: «ФЕР-2020, р.01-01-003-01»
+• Базисно-индексный — цены 2001 г.; ресурсный — текущие
+• В «Примечание» — коэффициенты, поправки, источник («из аналога», «по умолчанию»)
+• Итоговые строки: «Итого прямые затраты» → «НР» → «СП» → «Итого без НДС» → «НДС 20%» → «ИТОГО с НДС»
+
+ПРАВИЛА ОКРУГЛЕНИЯ:
+• Цена единицы — 2 знака после запятой
+• Объём — как в ВОР, не более 3 знаков
+• Стоимость позиции и все итоги — до целых рублей
+• НДС — от итога без НДС, до рублей
+• Не округляй промежуточные вычисления — только итоговые ячейки
+
+━━━ РЕЖИМ ПРАВОК ━━━
+
+Точечная правка: меняй только запрошенное, пересчитывай итоги, подтверди кратко.
+Новый раздел: уточни — те же параметры?
+Пересчёт параметров: уточни — вся смета или часть? Выдай обновлённую целиком.
+Позиции «[ТРЕБУЕТ УТОЧНЕНИЯ]» НЕ удалять до явного решения пользователя.
+
+━━━ ПАМЯТЬ ПАРАМЕТРОВ ━━━
+
+В начале новой сессии: «Если работали со мной ранее — напишите параметры или загрузите аналогичную смету.»
+
+В конце сессии ВСЕГДА выводи блок:
+«Параметры для следующей сессии:
+• Метод: ...
+• Сборник/редакция: ...
+• Регион: ...
+• Индексы (...кв. 20..): ОЗП—...; ЭМ—...; МАТ—...; НР—...; СП—...
+• Заказчик: ...
+• НДС: ...
+• НР/СП: ...
+• Условия: ...»
+
+━━━ ЖЁСТКИЕ ПРАВИЛА ━━━
+
+• Не выдумывай расценки — неизвестное → «[ТРЕБУЕТ УТОЧНЕНИЯ]»
+• Объёмы — строго из ВОР
+• Всегда указывай сборник и редакцию в шифре
+• Индексы позже августа 2025 — запрашивай у пользователя
+• ВОР > 150 позиций — блочный режим обязательно
+• Параметры из аналога — предзаполненные, но не окончательные
+• «По умолчанию» или «из аналога» — фиксируй в примечании`;
+
+module.exports = async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).end();
+
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Не авторизован' });
+
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+  );
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !user) return res.status(401).json({ error: 'Не авторизован' });
+
+  const { messages, estimateId, title } = req.body;
+  if (!messages || !Array.isArray(messages)) {
+    return res.status(400).json({ error: 'Неверный формат сообщений' });
+  }
+
+  try {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 8192,
+      system: SYSTEM_PROMPT,
+      messages: messages
+    });
+
+    const assistantText = response.content[0].text;
+    const updatedMessages = [...messages, { role: 'assistant', content: assistantText }];
+
+    // Auto-generate title from first user message
+    const autoTitle = title || (() => {
+      const firstMsg = messages[0]?.content || '';
+      const t = firstMsg.slice(0, 60).replace(/\n/g, ' ').trim();
+      return t || 'Новая смета';
+    })();
+
+    let savedId = estimateId;
+    if (estimateId) {
+      await supabase.from('estimates')
+        .update({ messages: updatedMessages, updated_at: new Date().toISOString() })
+        .eq('id', estimateId)
+        .eq('user_id', user.id);
+    } else {
+      const { data: newEst } = await supabase.from('estimates')
+        .insert({ user_id: user.id, title: autoTitle, messages: updatedMessages })
+        .select()
+        .single();
+      savedId = newEst?.id;
+    }
+
+    res.json({ message: assistantText, estimateId: savedId });
+  } catch (err) {
+    console.error('Chat error:', err);
+    res.status(500).json({ error: 'Ошибка: ' + err.message });
+  }
+};
