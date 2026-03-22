@@ -1,66 +1,98 @@
-const { createClient } = require('@supabase/supabase-js');
-
-module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token) return res.status(401).json({ error: 'Не авторизован' });
-
-  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-
-  // Verify caller is admin
-  const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-  if (authError || !user) return res.status(401).json({ error: 'Не авторизован' });
-
-  const { data: profile } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single();
-  if (!profile?.is_admin) return res.status(403).json({ error: 'Доступ запрещён' });
-
-  // GET /api/admin?action=users
-  if (req.method === 'GET') {
-    const action = req.query.action;
-    if (action === 'users') {
-      const { data: profiles } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
-      return res.json({ users: profiles || [] });
-    }
-    if (action === 'estimates') {
-      const { userId } = req.query;
-      let query = supabase.from('estimates').select('id, title, user_id, created_at, updated_at').order('updated_at', { ascending: false });
-      if (userId) query = query.eq('user_id', userId);
-      const { data } = await query;
-      return res.json({ estimates: data || [] });
-    }
-    return res.status(400).json({ error: 'Неизвестное действие' });
-  }
-
-  // POST /api/admin — create user
-  if (req.method === 'POST') {
-    const { email, password, isAdmin } = req.body;
-    if (!email || !password) return res.status(400).json({ error: 'Email и пароль обязательны' });
-
-    const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
-      email, password, email_confirm: true
-    });
-    if (createError) return res.status(400).json({ error: createError.message });
-
-    if (isAdmin) {
-      await supabase.from('profiles').update({ is_admin: true }).eq('id', newUser.user.id);
-    }
-    return res.json({ success: true, userId: newUser.user.id });
-  }
-
-  // DELETE /api/admin — delete user
-  if (req.method === 'DELETE') {
-    const { userId } = req.body;
-    if (!userId) return res.status(400).json({ error: 'userId обязателен' });
-    if (userId === user.id) return res.status(400).json({ error: 'Нельзя удалить себя' });
-
-    const { error: delError } = await supabase.auth.admin.deleteUser(userId);
-    if (delError) return res.status(400).json({ error: delError.message });
-    return res.json({ success: true });
-  }
-
-  res.status(405).end();
-};
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Панель администратора</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; min-height: 100vh; }
+.header { background: #1F3864; padding: 16px 32px; display: flex; align-items: center; gap: 16px; }
+.header h1 { color: #fff; font-size: 18px; font-weight: 700; }
+.header a { color: rgba(255,255,255,0.7); font-size: 13px; text-decoration: none; }
+.header a:hover { color: #fff; }
+.container { max-width: 900px; margin: 32px auto; padding: 0 20px; }
+.card { background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 1px 6px rgba(0,0,0,0.06); }
+.card h2 { font-size: 16px; color: #1F3864; font-weight: 700; margin-bottom: 20px; }
+.add-user { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 24px; }
+.add-user input { flex: 1; min-width: 180px; padding: 9px 12px; border: 1.5px solid #d1d5db; border-radius: 8px; font-size: 14px; outline: none; }
+.add-user input:focus { border-color: #2E75B6; }
+label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #374151; cursor: pointer; padding: 9px 0; white-space: nowrap; }
+.btn { padding: 9px 18px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.btn-primary { background: #1F3864; color: #fff; }
+.btn-primary:hover { background: #2E75B6; }
+.btn-danger { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+.btn-danger:hover { background: #fee2e2; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; padding: 10px 12px; font-size: 12px; color: #6b7280; font-weight: 600; border-bottom: 2px solid #f3f4f6; text-transform: uppercase; letter-spacing: .4px; }
+td { padding: 12px 12px; font-size: 14px; border-bottom: 1px solid #f3f4f6; color: #111; }
+tr:last-child td { border-bottom: none; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.badge-admin { background: #ede9fe; color: #5b21b6; }
+.badge-user { background: #f3f4f6; color: #6b7280; }
+.msg-ok { background: #f0f9f4; color: #1B5E20; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+.msg-err { background: #fef2f2; color: #dc2626; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; display: none; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Панель администратора</h1>
+  <a href="/app.html">← Вернуться к агенту</a>
+</div>
+<div class="container">
+  <div class="card">
+    <h2>Добавить пользователя</h2>
+    <div class="msg-ok" id="addOk">Пользователь создан</div>
+    <div class="msg-err" id="addErr"></div>
+    <div class="add-user">
+      <input type="email" id="newEmail" placeholder="Email">
+      <input type="password" id="newPwd" placeholder="Пароль (мин. 6 символов)">
+      <label class="check"><input type="checkbox" id="newAdmin"> Администратор</label>
+      <button class="btn btn-primary" onclick="addUser()">Добавить</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Пользователи (<span id="userCount">0</span>)</h2>
+    <div class="msg-err" id="delErr"></div>
+    <table>
+      <thead>
+        <tr><th>Email</th><th>Роль</th><th>Дата регистрации</th><th></th></tr>
+      </thead>
+      <tbody id="usersTable"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const SUPABASE_URL = 'https://bqcvhudwjpcxrqseggbj.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_yBNVvh3r5pANHNASwP0acw__xVfHowl';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let currentUserId = null;
+(async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.location.href = '/'; return; }
+  currentUserId = session.user.id;
+  const { data: profile } = await sb.from('profiles').select('is_admin').eq('id', currentUserId).single();
+  if (!profile?.is_admin) { window.location.href = '/app.html'; return; }
+  loadUsers();
+})();
+async function apiCall(method, body, params) {
+  const { data: { session } } = await sb.auth.getSession();
+  let url = '/api/admin';
+  if (params) url += '?' + new URLSearchParams(params);
+  const opts = { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  return r.json();
+}
+async function loadUsers() {
+  const data = await apiCall('GET', null, { action: 'users' });
+  const users = data.users || [];
+  document.getElementById('userCount').textContent = users.length;
+  const tbody = document.getElementById('usersTable');
+  tbody.innerHTML = '';
+  users.forEach(u => {
+    const tr = document.createElement('tr');
+    const isMe = u.id === currentUserId;
+    tr.innerHTML = `<td>${esc(u.email||
