@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Сметный агент — Вход</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .card { background: #fff; border-radius: 16px; padding: 48px 40px; width: 100%; max-width: 400px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); }
+  .logo { text-align: center; margin-bottom: 32px; }
+  .logo h1 { font-size: 22px; color: #1F3864; font-weight: 700; }
+  .logo p { color: #6b7280; font-size: 14px; margin-top: 6px; }
+  label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+  input { width: 100%; padding: 11px 14px; border: 1.5px solid #d1d5db; border-radius: 8px; font-size: 15px; outline: none; transition: border-color .2s; }
+  input:focus { border-color: #2E75B6; }
+  .field { margin-bottom: 20px; }
+  button { width: 100%; padding: 12px; background: #1F3864; color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: background .2s; }
+  button:hover { background: #2E75B6; }
+  button:disabled { background: #9ca3af; cursor: not-allowed; }
+  .error { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1>Сметный агент</h1>
+    <p>Введите данные для входа</p>
+  </div>
+  <div class="error" id="err"></div>
+  <div class="field">
+    <label>Email</label>
+    <input type="email" id="email" placeholder="you@example.com" autocomplete="email">
+  </div>
+  <div class="field">
+    <label>Пароль</label>
+    <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
+  </div>
+  <button id="btn" onclick="login()">Войти</button>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://bqcvhudwjpcxrqseggbj.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_yBNVvh3r5pANHNASwP0acw__xVfHowl';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Auto-redirect if already logged in
+sb.auth.getSession().then(({ data: { session } }) => {
+  if (session) window.location.href = '/app.html';
+});
+
+async function login() {
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const btn = document.getElementById('btn');
+  const err = document.getElementById('err');
+
+  if (!email || !password) { showError('Введите email и пароль'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Вхожу...';
+  err.style.display = 'none';
+
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) {
+    showError('Неверный email или пароль');
+    btn.disabled = false;
+    btn.textContent = 'Войти';
+  } else {
+    window.location.href = '/app.html';
+  }
+}
+
+function showError(msg) {
+  const err = document.getElementById('err');
+  err.textContent = msg;
+  err.style.display = 'block';
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+</script>
+</body>
+</html>

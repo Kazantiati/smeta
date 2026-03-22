@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Сметный агент</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; height: 100vh; display: flex; overflow: hidden; }
+
+/* Sidebar */
+.sidebar { width: 280px; min-width: 280px; background: #1F3864; display: flex; flex-direction: column; height: 100vh; }
+.sidebar-header { padding: 20px 16px 12px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+.sidebar-header h2 { color: #fff; font-size: 16px; font-weight: 700; }
+.sidebar-header p { color: rgba(255,255,255,0.6); font-size: 12px; margin-top: 2px; }
+.new-btn { margin: 12px; padding: 10px; background: #2E75B6; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; width: calc(100% - 24px); transition: background .2s; }
+.new-btn:hover { background: #378ADD; }
+.estimates-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
+.est-item { padding: 10px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 2px; transition: background .15s; }
+.est-item:hover { background: rgba(255,255,255,0.1); }
+.est-item.active { background: rgba(255,255,255,0.15); }
+.est-item .est-title { color: #fff; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.est-item .est-date { color: rgba(255,255,255,0.5); font-size: 11px; margin-top: 2px; }
+.sidebar-footer { padding: 12px; border-top: 1px solid rgba(255,255,255,0.1); }
+.user-row { display: flex; align-items: center; justify-content: space-between; }
+.user-email { color: rgba(255,255,255,0.7); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.logout-btn { color: rgba(255,255,255,0.5); background: none; border: none; cursor: pointer; font-size: 12px; padding: 4px 6px; border-radius: 4px; }
+.logout-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
+.admin-link { display: block; color: rgba(255,255,255,0.5); font-size: 11px; text-align: center; margin-top: 8px; text-decoration: none; }
+.admin-link:hover { color: #fff; }
+
+/* Main */
+.main { flex: 1; display: flex; flex-direction: column; height: 100vh; min-width: 0; }
+.top-bar { background: #fff; padding: 14px 20px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px; }
+.top-bar h3 { font-size: 15px; color: #1F3864; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.download-btn { padding: 7px 14px; background: #f0f9f4; color: #1B5E20; border: 1px solid #c6e6d0; border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 500; }
+.download-btn:hover { background: #d4f0de; }
+
+/* Chat */
+.chat-area { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; background: #f7f8fa; }
+.msg { max-width: 80%; }
+.msg.user { align-self: flex-end; }
+.msg.assistant { align-self: flex-start; }
+.msg-bubble { padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.msg.user .msg-bubble { background: #1F3864; color: #fff; border-bottom-right-radius: 4px; }
+.msg.assistant .msg-bubble { background: #fff; color: #111; border-bottom-left-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+.msg-time { font-size: 11px; color: #9ca3af; margin-top: 4px; }
+.msg.user .msg-time { text-align: right; }
+.typing { align-self: flex-start; }
+.typing .msg-bubble { color: #6b7280; font-style: italic; }
+.empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #9ca3af; text-align: center; gap: 8px; }
+.empty-state .icon { font-size: 48px; }
+.empty-state h3 { color: #4b5563; font-size: 18px; }
+.empty-state p { font-size: 14px; max-width: 360px; }
+
+/* Input area */
+.input-area { background: #fff; border-top: 1px solid #e5e7eb; padding: 16px 20px; }
+.vor-info { background: #f0f9f4; border: 1px solid #c6e6d0; border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; color: #1B5E20; display: none; align-items: center; justify-content: space-between; }
+.vor-info button { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 16px; }
+.input-row { display: flex; gap: 10px; align-items: flex-end; }
+.attach-btn { padding: 10px 12px; background: #f3f4f6; border: 1.5px solid #d1d5db; border-radius: 8px; cursor: pointer; font-size: 18px; flex-shrink: 0; transition: background .15s; }
+.attach-btn:hover { background: #e5e7eb; }
+textarea { flex: 1; padding: 10px 14px; border: 1.5px solid #d1d5db; border-radius: 8px; font-size: 14px; resize: none; outline: none; font-family: inherit; min-height: 44px; max-height: 200px; transition: border-color .2s; line-height: 1.5; }
+textarea:focus { border-color: #2E75B6; }
+.send-btn { padding: 10px 18px; background: #1F3864; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; flex-shrink: 0; transition: background .2s; }
+.send-btn:hover:not(:disabled) { background: #2E75B6; }
+.send-btn:disabled { background: #d1d5db; cursor: not-allowed; }
+#fileInput { display: none; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-header">
+    <h2>Сметный агент</h2>
+    <p id="userEmail">Загрузка...</p>
+  </div>
+  <button class="new-btn" onclick="newChat()">+ Новая смета</button>
+  <div class="estimates-list" id="estList"></div>
+  <div class="sidebar-footer">
+    <div class="user-row">
+      <span class="user-email" id="userEmailFooter"></span>
+      <button class="logout-btn" onclick="logout()">Выйти</button>
+    </div>
+    <a href="/admin.html" class="admin-link" id="adminLink" style="display:none">⚙ Панель администратора</a>
+  </div>
+</div>
+
+<div class="main">
+  <div class="top-bar">
+    <h3 id="chatTitle">Новая смета</h3>
+    <button class="download-btn" onclick="downloadChat()" id="downloadBtn" style="display:none">Скачать таблицу (Excel)</button>
+  </div>
+  <div class="chat-area" id="chatArea">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">📋</div>
+      <h3>Новая смета</h3>
+      <p>Нажмите 📎 чтобы загрузить файл ВОР, или напишите сообщение для начала работы</p>
+    </div>
+  </div>
+  <div class="input-area">
+    <div class="vor-info" id="vorInfo">
+      <span id="vorName">Файл не выбран</span>
+      <button onclick="clearVor()">✕</button>
+    </div>
+    <div class="input-row">
+      <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Загрузить ВОР (Excel)">📎</button>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" onchange="handleFile(event)">
+      <textarea id="msgInput" placeholder="Напишите сообщение..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+      <button class="send-btn" id="sendBtn" onclick="sendMessage()">Отправить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://bqcvhudwjpcxrqseggbj.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_yBNVvh3r5pANHNASwP0acw__xVfHowl';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let currentUser = null;
+let currentEstimateId = null;
+let messages = [];
+let pendingVorText = null;
+let isLoading = false;
+
+// Init
+(async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { window.location.href = '/'; return; }
+  currentUser = session.user;
+  document.getElementById('userEmail').textContent = currentUser.email;
+  document.getElementById('userEmailFooter').textContent = currentUser.email;
+
+  // Check admin
+  const { data: profile } = await sb.from('profiles').select('is_admin').eq('id', currentUser.id).single();
+  if (profile?.is_admin) document.getElementById('adminLink').style.display = 'block';
+
+  loadEstimates();
+})();
+
+async function loadEstimates() {
+  const { data } = await sb.from('estimates')
+    .select('id, title, updated_at')
+    .eq('user_id', currentUser.id)
+    .order('updated_at', { ascending: false });
+
+  const list = document.getElementById('estList');
+  list.innerHTML = '';
+  (data || []).forEach(est => {
+    const d = document.createElement('div');
+    d.className = 'est-item' + (est.id === currentEstimateId ? ' active' : '');
+    d.innerHTML = `<div class="est-title">${esc(est.title)}</div><div class="est-date">${fmtDate(est.updated_at)}</div>`;
+    d.onclick = () => loadEstimate(est.id);
+    list.appendChild(d);
+  });
+}
+
+async function loadEstimate(id) {
+  const { data } = await sb.from('estimates').select('*').eq('id', id).single();
+  if (!data) return;
+  currentEstimateId = id;
+  messages = data.messages || [];
+  document.getElementById('chatTitle').textContent = data.title;
+  document.getElementById('downloadBtn').style.display = 'block';
+  renderMessages();
+  loadEstimates();
+}
+
+function newChat() {
+  currentEstimateId = null;
+  messages = [];
+  pendingVorText = null;
+  document.getElementById('chatTitle').textContent = 'Новая смета';
+  document.getElementById('downloadBtn').style.display = 'none';
+  document.getElementById('vorInfo').style.display = 'none';
+  renderMessages();
+  loadEstimates();
+}
+
+function renderMessages() {
+  const area = document.getElementById('chatArea');
+  const empty = document.getElementById('emptyState');
+  area.innerHTML = '';
+
+  if (messages.length === 0) {
+    area.appendChild(empty);
+    return;
+  }
+
+  messages.forEach(m => {
+    const div = document.createElement('div');
+    div.className = 'msg ' + m.role;
+    div.innerHTML = `<div class="msg-bubble">${esc(m.content)}</div>`;
+    area.appendChild(div);
+  });
+  area.scrollTop = area.scrollHeight;
+}
+
+function handleFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const wb = XLSX.read(ev.target.result, { type: 'binary' });
+    let text = `=== ФАЙЛ ВОР: ${file.name} ===\n\n`;
+    wb.SheetNames.forEach(name => {
+      const ws = wb.Sheets[name];
+      const csv = XLSX.utils.sheet_to_csv(ws, { skipHidden: true });
+      if (csv.trim()) text += `--- Лист: ${name} ---\n${csv}\n\n`;
+    });
+    pendingVorText = text;
+    document.getElementById('vorName').textContent = file.name;
+    document.getElementById('vorInfo').style.display = 'flex';
+  };
+  reader.readAsBinaryString(file);
+  e.target.value = '';
+}
+
+function clearVor() {
+  pendingVorText = null;
+  document.getElementById('vorInfo').style.display = 'none';
+}
+
+async function sendMessage() {
+  if (isLoading) return;
+  const input = document.getElementById('msgInput');
+  let text = input.value.trim();
+
+  if (pendingVorText) {
+    text = pendingVorText + (text ? '\n\nКомментарий пользователя: ' + text : '');
+    clearVor();
+  }
+
+  if (!text) return;
+
+  input.value = '';
+  autoResize(input);
+  isLoading = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  messages.push({ role: 'user', content: text });
+  renderMessages();
+
+  // Show typing
+  const area = document.getElementById('chatArea');
+  const typing = document.createElement('div');
+  typing.className = 'msg assistant typing';
+  typing.innerHTML = '<div class="msg-bubble">Анализирую...</div>';
+  area.appendChild(typing);
+  area.scrollTop = area.scrollHeight;
+
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token },
+      body: JSON.stringify({ messages, estimateId: currentEstimateId, title: messages[0]?.content?.slice(0, 60) })
+    });
+
+    const json = await resp.json();
+    if (json.error) throw new Error(json.error);
+
+    if (json.estimateId && !currentEstimateId) {
+      currentEstimateId = json.estimateId;
+      document.getElementById('downloadBtn').style.display = 'block';
+    }
+
+    messages.push({ role: 'assistant', content: json.message });
+    renderMessages();
+    loadEstimates();
+  } catch (err) {
+    messages.pop();
+    alert('Ошибка: ' + err.message);
+    renderMessages();
+  }
+
+  isLoading = false;
+  document.getElementById('sendBtn').disabled = false;
+}
+
+function downloadChat() {
+  const tableLines = [];
+  const header = ['№','Раздел','Шифр расценки','Наименование работ','Ед.изм','Объём','Стоим. ед. (баз.)','Всего (баз.)','Примечание'];
+  tableLines.push(header);
+
+  // Extract table from last assistant message
+  const lastAssist = [...messages].reverse().find(m => m.role === 'assistant');
+  if (!lastAssist) { alert('Нет данных для скачивания'); return; }
+
+  const lines = lastAssist.content.split('\n');
+  lines.forEach(line => {
+    const cells = line.split('|').map(c => c.trim()).filter(c => c);
+    if (cells.length >= 3) tableLines.push(cells);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(tableLines);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Смета');
+  XLSX.writeFile(wb, 'smeta_' + new Date().toISOString().slice(0,10) + '.xlsx');
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+}
+
+async function logout() {
+  await sb.auth.signOut();
+  window.location.href = '/';
+}
+
+function esc(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('ru-RU', { day:'2-digit', month:'2-digit', year:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+</script>
+</body>
+</html>
