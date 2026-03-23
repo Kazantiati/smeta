@@ -4,78 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Панель администратора</title>
-<script>
-const SUPABASE_URL = 'https://bqcvhudwjpcxrqseggbj.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_yBNVvh3r5pANHNASwP0acw__xVfHowl';
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-let currentUserId = null;
-
-async function init() {
-  const { data: { session } } = await sb.auth.getSession();
-  if (!session) { window.location.href = '/'; return; }
-  currentUserId = session.user.id;
-  const { data: profile } = await sb.from('profiles').select('is_admin').eq('id', currentUserId).single();
-  if (!profile?.is_admin) { window.location.href = '/app.html'; return; }
-  loadUsers();
-}
-
-async function apiCall(method, body, params) {
-  const { data: { session } } = await sb.auth.getSession();
-  let url = '/api/admin';
-  if (params) url += '?' + new URLSearchParams(params);
-  const opts = { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token } };
-  if (body) opts.body = JSON.stringify(body);
-  const r = await fetch(url, opts);
-  return r.json();
-}
-
-async function loadUsers() {
-  const data = await apiCall('GET', null, { action: 'users' });
-  const users = data.users || [];
-  document.getElementById('userCount').textContent = users.length;
-  const tbody = document.getElementById('usersTable');
-  tbody.innerHTML = '';
-  users.forEach(u => {
-    const tr = document.createElement('tr');
-    const isMe = u.id === currentUserId;
-    tr.innerHTML = `<td>${esc(u.email||'—')}</td><td><span class="badge ${u.is_admin?'badge-admin':'badge-user'}">${u.is_admin?'Администратор':'Пользователь'}</span></td><td>${fmtDate(u.created_at)}</td><td>${isMe?'<span style="color:#9ca3af;font-size:12px">это вы</span>':`<button class="btn btn-danger btn-sm" onclick="deleteUser('${u.id}','${esc(u.email)}')">Удалить</button>`}</td>`;
-    tbody.appendChild(tr);
-  });
-}
-
-async function addUser() {
-  const email = document.getElementById('newEmail').value.trim();
-  const password = document.getElementById('newPwd').value;
-  const isAdmin = document.getElementById('newAdmin').checked;
-  const ok = document.getElementById('addOk');
-  const err = document.getElementById('addErr');
-  ok.style.display='none'; err.style.display='none';
-  if (!email||!password) { showErr(err,'Введите email и пароль'); return; }
-  if (password.length<6) { showErr(err,'Пароль не менее 6 символов'); return; }
-  const data = await apiCall('POST', { email, password, isAdmin });
-  if (data.error) { showErr(err, data.error); return; }
-  ok.style.display='block';
-  document.getElementById('newEmail').value='';
-  document.getElementById('newPwd').value='';
-  document.getElementById('newAdmin').checked=false;
-  loadUsers();
-}
-
-async function deleteUser(userId, email) {
-  if (!confirm(`Удалить пользователя ${email}?\nВсе его сметы также будут удалены.`)) return;
-  const err = document.getElementById('delErr');
-  err.style.display='none';
-  const data = await apiCall('DELETE', { userId });
-  if (data.error) { showErr(err, data.error); return; }
-  loadUsers();
-}
-
-function showErr(el, msg) { el.textContent=msg; el.style.display='block'; }
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function fmtDate(iso) { if(!iso) return '—'; return new Date(iso).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'2-digit'}); }
-
-init();
-</script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; min-height: 100vh; }
@@ -97,7 +25,7 @@ label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; col
 .btn-danger:hover { background: #fee2e2; }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 table { width: 100%; border-collapse: collapse; }
-th { text-align: left; padding: 10px 12px; font-size: 12px; color: #6b7280; font-weight: 600; border-bottom: 2px solid #f3f4f6; text-transform: uppercase; letter-spacing: .4px; }
+th { text-align: left; padding: 10px 12px; font-size: 12px; color: #6b7280; font-weight: 600; border-bottom: 2px solid #f3f4f6; text-transform: uppercase; }
 td { padding: 12px 12px; font-size: 14px; border-bottom: 1px solid #f3f4f6; color: #111; }
 tr:last-child td { border-bottom: none; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
@@ -128,42 +56,89 @@ tr:last-child td { border-bottom: none; }
     <h2>Пользователи (<span id="userCount">0</span>)</h2>
     <div class="msg-err" id="delErr"></div>
     <table>
-      <thead>
-        <tr><th>Email</th><th>Роль</th><th>Дата регистрации</th><th></th></tr>
-      </thead>
+      <thead><tr><th>Email</th><th>Роль</th><th>Дата</th><th></th></tr></thead>
       <tbody id="usersTable"></tbody>
     </table>
   </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
-const SUPABASE_URL = 'https://bqcvhudwjpcxrqseggbj.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_yBNVvh3r5pANHNASwP0acw__xVfHowl';
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-let currentUserId = null;
-(async () => {
-  const { data: { session } } = await sb.auth.getSession();
+var SUPABASE_URL = 'https://bqcvhudwjpcxrqseggbj.supabase.co';
+var SUPABASE_ANON_KEY = 'sb_publishable_yBNVvh3r5pANHNASwP0acw__xVfHowl';
+var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+var currentUserId = null;
+
+async function init() {
+  var res = await sb.auth.getSession();
+  var session = res.data.session;
   if (!session) { window.location.href = '/'; return; }
   currentUserId = session.user.id;
-  const { data: profile } = await sb.from('profiles').select('is_admin').eq('id', currentUserId).single();
-  if (!profile?.is_admin) { window.location.href = '/app.html'; return; }
+  var pr = await sb.from('profiles').select('is_admin').eq('id', currentUserId).single();
+  if (!pr.data || !pr.data.is_admin) { window.location.href = '/app.html'; return; }
   loadUsers();
-})();
+}
+
 async function apiCall(method, body, params) {
-  const { data: { session } } = await sb.auth.getSession();
-  let url = '/api/admin';
+  var res = await sb.auth.getSession();
+  var token = res.data.session.access_token;
+  var url = '/api/admin';
   if (params) url += '?' + new URLSearchParams(params);
-  const opts = { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + session.access_token } };
+  var opts = { method: method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token } };
   if (body) opts.body = JSON.stringify(body);
-  const r = await fetch(url, opts);
+  var r = await fetch(url, opts);
   return r.json();
 }
+
 async function loadUsers() {
-  const data = await apiCall('GET', null, { action: 'users' });
-  const users = data.users || [];
+  var data = await apiCall('GET', null, { action: 'users' });
+  var users = data.users || [];
   document.getElementById('userCount').textContent = users.length;
-  const tbody = document.getElementById('usersTable');
+  var tbody = document.getElementById('usersTable');
   tbody.innerHTML = '';
-  users.forEach(u => {
-    const tr = document.createElement('tr');
-    const isMe = u.id === currentUserId;
-    tr.innerHTML = `<td>${esc(u.email||
+  users.forEach(function(u) {
+    var tr = document.createElement('tr');
+    var isMe = u.id === currentUserId;
+    var badge = u.is_admin ? '<span class="badge badge-admin">Администратор</span>' : '<span class="badge badge-user">Пользователь</span>';
+    var action = isMe ? '<span style="color:#9ca3af;font-size:12px">это вы</span>' : '<button class="btn btn-danger btn-sm" onclick="deleteUser(\'' + u.id + '\',\'' + esc(u.email) + '\')">Удалить</button>';
+    tr.innerHTML = '<td>' + esc(u.email||'—') + '</td><td>' + badge + '</td><td>' + fmtDate(u.created_at) + '</td><td>' + action + '</td>';
+    tbody.appendChild(tr);
+  });
+}
+
+async function addUser() {
+  var email = document.getElementById('newEmail').value.trim();
+  var password = document.getElementById('newPwd').value;
+  var isAdmin = document.getElementById('newAdmin').checked;
+  var ok = document.getElementById('addOk');
+  var err = document.getElementById('addErr');
+  ok.style.display = 'none';
+  err.style.display = 'none';
+  if (!email || !password) { showErr(err, 'Введите email и пароль'); return; }
+  if (password.length < 6) { showErr(err, 'Пароль не менее 6 символов'); return; }
+  var data = await apiCall('POST', { email: email, password: password, isAdmin: isAdmin });
+  if (data.error) { showErr(err, data.error); return; }
+  ok.style.display = 'block';
+  document.getElementById('newEmail').value = '';
+  document.getElementById('newPwd').value = '';
+  document.getElementById('newAdmin').checked = false;
+  loadUsers();
+}
+
+async function deleteUser(userId, email) {
+  if (!confirm('Удалить пользователя ' + email + '?\nВсе его сметы также будут удалены.')) return;
+  var err = document.getElementById('delErr');
+  err.style.display = 'none';
+  var data = await apiCall('DELETE', { userId: userId });
+  if (data.error) { showErr(err, data.error); return; }
+  loadUsers();
+}
+
+function showErr(el, msg) { el.textContent = msg; el.style.display = 'block'; }
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function fmtDate(iso) { if (!iso) return '—'; return new Date(iso).toLocaleDateString('ru-RU', {day:'2-digit', month:'2-digit', year:'2-digit'}); }
+
+init();
+</script>
+</body>
+</html>
